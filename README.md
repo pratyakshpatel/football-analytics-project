@@ -1,162 +1,118 @@
 # Graph-Based Player Compatibility Model (GoalNet-Lite)
 
-A sophisticated Machine Learning pipeline that utilizes Graph Neural Networks (GNNs) to quantify the chemical compatibility between football players. Unlike traditional approaches that rely on weighted averages of statistics, this project learns player embeddings directly from match event data and predicts compatibility using a multi-task neural network trained on actual on-pitch interactions.
+A sophisticated Machine Learning pipeline that uses Graph Neural Networks (GNNs) to quantify compatibility between football players by learning embeddings from match event data and predicting compatibility using a multi-task neural network.
+
+## Quick Start
+
+### Installation
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install --upgrade pip
+pip install torch pandas numpy tqdm scikit-learn
+pip install torch-geometric  # Optional but recommended
+```
+
+### Running the Model
+
+```bash
+python compatibility_model_gnn.py --playerA 5503 --playerB 4320
+```
+
+This computes a compatibility score between player 5503 (Messi) and player 4320 (Neymar Jr).
+
+**Finding Player IDs:**
+```bash
+grep -i "messi" csv_data/lineups.csv  # Linux/macOS
+findstr /I "messi" csv_data\lineups.csv  # Windows
+```
+
+### Configuration Options
+
+```bash
+python compatibility_model_gnn.py \
+  --playerA 5503 \
+  --playerB 4320 \
+  --epochs 5 \              # GNN training epochs (default: 3)
+  --batch-size 32 \         # Batch size (default: 32)
+  --grid-x 12 \             # xT grid columns (default: 12)
+  --grid-y 8 \              # xT grid rows (default: 8)
+  --min-events-player 30    # Filter sparse players (default: 0)
+```
+
+### Output Interpretation
+
+The model outputs a compatibility score (0-1):
+- **0.80-1.00**: Elite partnership potential
+- **0.60-0.79**: Strong compatibility  
+- **0.40-0.59**: Moderate compatibility
+- **0.20-0.39**: Poor compatibility
+- **0.00-0.19**: Very poor compatibility
 
 ## Overview
 
-This repository contains a complete end-to-end pipeline implemented in `compatibility_model copy.py`. The system performs the following sequence of operations:
+The pipeline implemented in `compatibility_model_gnn.py` performs the following:
 
-1. **Ingests StatsBomb Event Data**: Processes raw match events from CSV batches into a structured dataframe containing all relevant match action data.
+The pipeline implemented in `compatibility_model_gnn.py` performs the following:
 
-2. **Calculates Advanced Threat Metrics**: Computes a grid-based Expected Threat (xT) model using a Markov Chain approach. This assigns threat values to different zones of the pitch based on the probability of generating a goal from that zone. Additionally, for every action, it calculates the delta xT (change in threat), which measures how much the threat increased or decreased from the start to the end of that action.
+1. **Loads StatsBomb Event Data**: Processes raw match events from CSV batches.
+2. **Calculates Expected Threat (xT)**: Computes grid-based threat values using a Markov Chain approach.
+3. **Constructs Event Graphs**: Models each pass as a graph with players as nodes.
+4. **Learns Player Embeddings**: Trains a GCN to predict delta xT, generating 128-dimensional player embeddings.
+5. **Predicts Compatibility**: Uses a multi-task MLP to score player pairs.
 
-3. **Constructs Event Graphs**: Models every pass event as a graph where nodes represent all players currently on the pitch and edges encode spatial relationships, pass characteristics, and threat changes. This graph representation captures the contextual information surrounding each pass.
+## Data Requirements
 
-4. **Learns Player Embeddings**: Trains a Graph Convolutional Network (GCN) to predict the delta xT (change in threat) for each pass. During this training process, the network learns a dense 128-dimensional embedding for each player that captures their playing style, spatial preferences, and threat-generating capabilities.
-
-5. **Predicts Compatibility**: Uses a learned neural network scorer to evaluate how well two players' embeddings complement each other. Instead of using hardcoded weights, the system learns from data which embedding patterns correlate with successful partnerships.
-
-## Data Structure and Requirements
-
-The model expects data to be organized in a specific directory structure. All input CSV files should be placed in a folder named `csv_data/` in the project root directory. This section describes the required data files and their attributes.
-
-### Directory Layout and File Organization
-
-The following directory structure is required for the pipeline to function correctly:
+Place StatsBomb CSV files in a `csv_data/` folder:
 
 ```
-project_root/
 csv_data/
-    events_batch_0.csv    # Event data chunk 0 (main event information)
-    events_batch_1.csv    # Event data chunk 1
-    events_batch_2.csv    # Event data chunk 2
-    ...more batches...
-    lineups.csv           # Player roster and ID to name mapping
-    matches.csv           # Match metadata and fixtures
-    competitions.csv      # Competition and league information
+├── events_batch_0.csv, events_batch_1.csv, ...  # Event data (required)
+├── lineups.csv                                   # Player ID → Name mapping (required)
+├── matches.csv                                   # Match metadata (optional)
+└── competitions.csv                              # Competition info (optional)
 ```
 
-The events are split into batches to manage file size. The pipeline automatically discovers and loads all `events_batch_*.csv` files in the csv_data directory in numerical order.
+**Minimum Required Columns (events_batch_*.csv):**
+- `match_id`, `team_id`, `player_id`, `event_type`
+- `x_start`, `y_start`, `x_end`, `y_end`
+- `pass_recipient_id`, `timestamp`
+- `pass_angle`, `pass_length`, `pass_height_name`, `under_pressure`
 
-### Event Data Attributes (events_batch_*.csv)
+**Lineups File:**
+- `player_id` (Integer)
+- `player_name` (String)
 
-Each event batch CSV file should contain the following columns. These represent the standard StatsBomb format converted into a flat CSV structure:
+## Model Architecture
 
-| Column Name | Data Type | Description |
-|-------------|-----------|-------------|
-| `match_id` | Integer | Unique identifier for each match in the dataset |
-| `team_id` | Integer | Identifier for the team performing the action |
-| `player_id` | Integer | Identifier for the player performing the action |
-| `event_type` | String | Classification of the event (Pass, Shot, Carry, Dribble, Tackle, Interception, etc.) |
-| `x_start` | Float | Starting X-coordinate of the action (normalized to 0-1 scale) |
-| `y_start` | Float | Starting Y-coordinate of the action (normalized to 0-1 scale) |
-| `x_end` | Float | Ending X-coordinate of the action (for passes and shots) |
-| `y_end` | Float | Ending Y-coordinate of the action (for passes and shots) |
-| `pass_recipient_id` | Integer | Player ID of the pass recipient (only for Pass events) |
-| `timestamp` | String/Datetime | Time at which the event occurred (used for chronological ordering) |
-| `pass_angle` | Float | Angle of the pass trajectory in radians |
-| `pass_length` | Float | Distance covered by the pass in pitch units |
-| `pass_height_name` | String | Pass height classification (Ground Pass, High Pass, Head Pass) |
-| `pass_type_name` | String | Pass type classification (Short Pass, Long Pass, Cross, etc.) |
-| `under_pressure` | Boolean | Flag indicating whether the player was under defensive pressure |
-| `position_id` | Integer | Tactical position of the player (1=GK, 2=Defense, 3=Midfield, 4=Forward) |
-| `shot_outcome` | String | Outcome of shots (Saved, Goal, Off Target, Blocked, Post) |
-| `outcome` | String | General outcome (Success, Failure, Incomplete) |
+### 11-Stage Pipeline
 
-Note: The pipeline includes graceful fallback handling for missing columns. If certain columns are not present, the system will either use default values or skip that particular feature extraction step with a warning message.
+**Stages 1-3**: Load events, assign possession chains, sort chronologically.
 
-### Lineups File (lineups.csv)
+**Stage 4**: Compute Expected Threat (xT) map on a 12x8 grid using Markov Chain analysis. Calculate delta xT (threat change) for every action.
 
-The lineups file is essential for mapping player IDs to human-readable names in the output. It should contain at minimum the following columns:
+**Stage 5**: Build 23-dimensional player feature vectors:
+- Core metrics (9): Passes, accuracy, dribbles, tackles, xT created/received
+- Position encoding (7): One-hot encoded tactical role
+- Pass signature (5): Average length, angle, type distribution, aerial percentage
+- Pressure profile (2): Performance under pressure
 
-| Column Name | Data Type | Description |
-|-------------|-----------|-------------|
-| `player_id` | Integer | Unique identifier for the player |
-| `player_name` | String | Full name of the player (e.g., "Lionel Andrés Messi Cuccittini") |
+**Stage 6**: Construct pass event graphs where nodes are on-pitch players and edges encode spatial/threat information.
 
-The pipeline uses this mapping to display human-readable output when computing compatibility scores.
+**Stage 7**: Train a 3-layer GCN to predict delta xT, learning 128-dimensional player embeddings.
 
-## Model Architecture and Technical Details
+**Stage 8**: Extract player embeddings by averaging across all graphs.
 
-The complete pipeline is implemented as a single Python script (`compatibility_model copy.py`) and consists of 11 sequential processing stages. Each stage transforms the data and extracts features that feed into the next stage.
+**Stage 9**: Compute zone profiles and heatmaps (secondary signals).
 
-### Stage 1-3: Data Loading and Possession Assignment
+**Stage 10**: Train a multi-task MLP scorer that takes concatenated embeddings [h_A || h_B] and outputs:
+- Main compatibility score (0-1)
+- Pass quality prediction
+- Threat flow prediction
+- Position synergy prediction
 
-The pipeline begins by loading all StatsBomb event data from the CSV files in the csv_data directory. The events are then sorted chronologically within each match. To prepare for graph construction, possession chains are assigned. A new possession ID is created each time the ball changes from one team to another, creating chains of actions by the same team. This stage is purely data preparation and does not involve any machine learning.
-
-### Stage 4: Expected Threat (xT) Calculation
-
-Expected Threat is a fundamental metric in modern football analytics. The pitch is divided into a grid (default 12 columns by 8 rows, creating 96 zones). For each zone, the model calculates the probability of scoring from that zone using a Markov Chain approach:
-
-The algorithm first counts all transitions between zones (where the ball moves from one zone to another) and tracks shots and goals from each zone. Using these statistics, it calculates:
-- P(shot): Probability of taking a shot from this zone
-- P(goal | shot): Probability of scoring given a shot from this zone
-- Transition probabilities: Where the ball typically moves next
-
-These are combined iteratively to compute xT for each zone. For every pass event, the system then calculates delta xT: the change in threat value from the start point to the end point. A pass that moves the ball to a higher-threat zone has positive delta xT, indicating a good pass that increased scoring probability.
-
-### Stage 5: Enriched Player Feature Vectors (23 Dimensions)
-
-Rather than using raw statistics, the system constructs feature vectors that capture different aspects of each player's playing style. These 23-dimensional vectors are composed of four components:
-
-**Core Metrics (9 dimensions)**: Counting statistics including number of passes completed, pass completion percentage, number of dribbles, tackles won, interceptions, clearances, key passes, xT created (total threat generated), and xT received (total threat created for this player by teammates).
-
-**Position Encoding (7 dimensions)**: One-hot encoding of the player's most common tactical position. This creates a 7-dimensional binary vector where exactly one dimension is 1 and the rest are 0, representing goalkeeper, defender, midfielder, forward, or other positions.
-
-**Pass Signature (5 dimensions)**: Characteristics of the player's passing style including average pass length, average pass angle, percentage of short passes, percentage of long passes, and percentage of aerial passes.
-
-**Pressure Profile (2 dimensions)**: Performance metrics under pressure including the percentage of actions where the player was under defensive pressure and pass completion percentage while under pressure.
-
-These features are normalized across all players to ensure comparable scales, preventing any single feature from dominating due to unit differences.
-
-### Stage 6: Graph Construction from Pass Events
-
-For every pass event in the dataset, the system constructs a graph representation. In this graph:
-
-- **Nodes**: All players currently on the pitch (22 players total)
-- **Node Features**: The 23-dimensional player feature vectors described above
-- **Edges**: Connections between the passer and all other on-pitch players
-- **Edge Attributes**: 10 features including starting coordinates (x, y), ending coordinates (x, y), delta xT (threat change), pass length, pass angle, pass height, body part used, and pass outcome
-
-Building graphs for all pass events creates a large dataset on which the GNN can be trained. On average, each graph contains 22 nodes and dozens of edges, capturing the rich relational structure of a moment in the match.
-
-### Stage 7: Graph Neural Network Training
-
-A Graph Convolutional Network (GCN) with 3 layers is trained on these graphs. The objective is to predict the delta xT value for each edge (pass). By training to predict how much threat each pass creates, the network learns to extract player embeddings that capture threat-generation capabilities.
-
-During the forward pass, node features are updated using graph convolutions, aggregating information from neighboring nodes. After several layers of message passing, each node has a learned representation (embedding) that encodes both its own characteristics and its relationship to teammates.
-
-The network is trained with standard backpropagation for typically 3-10 epochs. The training process minimizes the Mean Squared Error between predicted and actual delta xT values.
-
-### Stage 8: Player Embedding Extraction
-
-Once the GNN is trained, embeddings are extracted for each player. For players appearing in multiple graphs, embeddings are averaged across all appearances. This results in a single 128-dimensional embedding per player that summarizes their threat-generation patterns and playing style as learned by the neural network.
-
-These embeddings are the core representation used in the compatibility scoring stage. Unlike raw features which are predefined, these embeddings are learned from data and can capture complex, nonlinear relationships that the GNN discovered.
-
-### Stage 9: Zone Profiles and Heatmaps
-
-For each player, the system computes several spatial profiles. These include heatmaps showing where on the pitch the player typically acts, pass destination distributions showing where they typically pass to, and xT profiles showing which zones they tend to create the most threat from. These spatial profiles are used for additional compatibility calculations but are secondary to the learned embeddings.
-
-### Stage 10: Learned Compatibility Scorer
-
-Rather than using hardcoded weights, the system uses a multi-task neural network to predict compatibility. This network takes as input the concatenated embeddings of two players ([h_A || h_B], a 256-dimensional vector) and outputs multiple predictions:
-
-**Main Compatibility Head**: The primary output, a score between 0 and 1 indicating how compatible the two players are based on their learned embeddings.
-
-**Auxiliary Head 1 - Pass Quality**: A prediction of how successful passes between the two players would be.
-
-**Auxiliary Head 2 - Threat Potential**: A prediction of how much collective threat the pair generates.
-
-**Auxiliary Head 3 - Synergy**: A spatial overlap measure indicating whether the players occupy complementary zones.
-
-This multi-task learning setup allows the network to learn a richer representation by optimizing multiple related objectives simultaneously.
-
-### Stage 11: Final Score Computation
-
-The final compatibility score for two players is computed by passing their learned embeddings through the Learned Compatibility Scorer network. The result is a single floating-point value between 0 and 1, where higher values indicate greater compatibility.
-
-The output is interpretable: a score above 0.8 suggests elite-level partnership potential, scores between 0.5-0.7 suggest moderate compatibility, and scores below 0.3 suggest poor compatibility.
+**Stage 11**: Score target player pair and output final result.
 
 ## Installation and Setup Instructions
 
@@ -258,7 +214,7 @@ The directory structure should look like:
 
 ```
 project_root/
-    compatibility_model copy.py
+    compatibility_model_gnn.py
     csv_data/
         events_batch_0.csv
         events_batch_1.csv
@@ -279,7 +235,7 @@ Once the installation is complete, you can run the compatibility model from the 
 The simplest way to run the model is to specify two player IDs:
 
 ```bash
-python "compatibility_model copy.py" --playerA 5503 --playerB 4320
+python compatibility_model_gnn.py --playerA 5503 --playerB 4320
 ```
 
 In this example, player 5503 (Lionel Messi) is being compared to player 4320 (Neymar Jr). The pipeline will run through all 11 stages and output a compatibility score.
@@ -305,7 +261,7 @@ This will display the line containing Messi's information, including his ID. Sim
 The pipeline supports several optional parameters to customize its behavior:
 
 ```bash
-python "compatibility_model copy.py" \
+python compatibility_model_gnn.py \
   --playerA 5503 \
   --playerB 4320 \
   --epochs 10 \
@@ -348,7 +304,7 @@ python "compatibility_model copy.py" \
 For testing purposes with minimal training:
 
 ```bash
-python "compatibility_model copy.py" --playerA 5503 --playerB 4320 --epochs 2 --batch-size 16
+python compatibility_model_gnn.py --playerA 5503 --playerB 4320 --epochs 2 --batch-size 16
 ```
 
 This completes in roughly 1-2 minutes and gives a quick compatibility estimate. Useful for verifying the pipeline works before running full analyses.
@@ -358,7 +314,7 @@ This completes in roughly 1-2 minutes and gives a quick compatibility estimate. 
 For accurate results with reasonable runtime:
 
 ```bash
-python "compatibility_model copy.py" --playerA 5503 --playerB 4320 --epochs 5 --batch-size 32
+python compatibility_model_gnn.py --playerA 5503 --playerB 4320 --epochs 5 --batch-size 32
 ```
 
 This typically completes in 3-5 minutes and provides reliable compatibility scores. This is the recommended setting for most use cases.
@@ -368,7 +324,7 @@ This typically completes in 3-5 minutes and provides reliable compatibility scor
 For the most accurate embeddings with extended training:
 
 ```bash
-python "compatibility_model copy.py" --playerA 5503 --playerB 4320 --epochs 10 --batch-size 64
+python compatibility_model_gnn.py --playerA 5503 --playerB 4320 --epochs 10 --batch-size 64
 ```
 
 This may take 10-20 minutes but produces the highest quality embeddings. Use when computational resources are not a constraint.
@@ -378,7 +334,7 @@ This may take 10-20 minutes but produces the highest quality embeddings. Use whe
 If your dataset contains many players with very few events (substitutes, youth players, etc.), filter them:
 
 ```bash
-python "compatibility_model copy.py" --playerA 5503 --playerB 4320 --min-events-player 50
+python compatibility_model_gnn.py --playerA 5503 --playerB 4320 --min-events-player 50
 ```
 
 This removes any player with fewer than 50 events, improving data quality by focusing on players with substantial playing time.
@@ -388,7 +344,7 @@ This removes any player with fewer than 50 events, improving data quality by foc
 For more granular threat calculations using a finer grid:
 
 ```bash
-python "compatibility_model copy.py" --playerA 5503 --playerB 4320 --grid-x 16 --grid-y 12
+python compatibility_model_gnn.py --playerA 5503 --playerB 4320 --grid-x 16 --grid-y 12
 ```
 
 This creates a 16x12 grid (192 zones instead of 96), allowing finer spatial resolution at the cost of slightly longer computation time.
@@ -438,61 +394,31 @@ This is expected. If installed, the pipeline uses the faster PyTorch Geometric l
 **Problem: Script crashes with "No pass graphs found"**
 Solution: Ensure your event data contains Pass events. Check that your CSV files are in the correct format and location.
 
-## Technical Methodology and Design Decisions
-
-This section explains the core concepts and design choices that make this approach effective for player compatibility scoring.
+## Technical Methodology
 
 ### Why Graph-Based Representation?
 
-Football inherently involves relational dynamics. A player's value is not purely individual statistics, but rather how they influence space, teammate movement, and defensive pressure. Traditional statistical approaches miss these network effects. By representing each match moment as a graph where players are nodes and interactions are edges, the model captures:
-
-**Spatial Context**: Where players typically receive the ball and what they do with it
-**Implicit Connections**: Patterns of who passes to whom and when
-**Style Matching**: Whether a long-ball passer has appropriate target players who excel at receiving long passes
-**Temporal Continuity**: How actions build on each other through possession chains
+Football is inherently relational. By representing match moments as graphs with players as nodes and interactions as edges, the model captures spatial context, implicit pass patterns, style matching, and temporal continuity that pure statistics miss.
 
 ### The Markov Chain xT Model
 
-Expected Threat values are calculated using a Markov Chain approach rather than empirical look-ups. This allows the model to work with any dataset and handles zone transitions mathematically. The model runs iteratively until convergence, solving for the fixed point where xT values reflect both immediate shooting threats and future pass opportunities. This is more theoretically sound than simple averaging.
+Expected Threat is calculated iteratively using zone transition counts and shot statistics, solving for the fixed point where xT values reflect both immediate shooting threats and future pass opportunities.
 
-### Embedding Concatenation vs. Other Fusion Methods
+### Embedding Concatenation
 
-When combining two player embeddings, the system uses concatenation [h_A || h_B] rather than other approaches like dot products or cosine similarity. Here's why:
+The model uses concatenation [h_A || h_B] to preserve all information from both player embeddings. This allows the downstream MLP to discover relevant interaction patterns, unlike dot products (lose magnitude) or cosine similarity (lose scale).
 
-Dot products measure angle similarity but lose magnitude information. Cosine similarity normalizes to unit vectors, eliminating information about player intensity or influence scale. Concatenation preserves all information from both embeddings and allows the downstream neural network to discover any relevant interaction patterns. The MLP can learn which combinations of features are complementary.
+### Multi-Task Learning
 
-### Multi-Task Learning Benefits
-
-The compatibility scorer uses auxiliary tasks (pass quality, threat potential, synergy) beyond the main compatibility output. This approach:
-
-- Regularizes the main task, preventing overfitting
-- Provides interpretable intermediate outputs for debugging
-- Allows the shared trunk to learn richer representations by solving multiple related problems
-- Improves generalization by sharing feature extraction across tasks
-
-### Handling Sparse Players
-
-Some players (substitutes, youth squad, long-term injured) have very few events. The `--min-events-player` option filters these out before training. Sparse players produce noisy features and unreliable embeddings. Filtering improves embedding quality for regular starters.
-
-## Understanding Graph Construction Details
-
-Each pass event generates a graph containing valuable contextual information. The graph includes:
-
-- All 22 on-pitch players as nodes
-- Edges connecting the passer to all other on-pitch players
-- Node features encoding each player's style and position
-- Edge features encoding spatial relationships and threat information
-
-This creates a large training set where even a 50-match sample generates thousands of graphs. The GNN learns player representations by observing patterns across all these match moments.
+The scorer trains on multiple related tasks (main compatibility, pass quality, threat flow, position synergy), which regularizes learning and improves generalization.
 
 ## Citation and Acknowledgments
 
-This project uses event data provided by StatsBomb, a leading football analytics company. StatsBomb's open data initiative makes detailed match analysis accessible to the broader football community.
-
-The graph neural network architecture is based on Graph Convolutional Networks (Kipf & Welling, 2017), implemented using PyTorch and PyTorch Geometric.
+This project uses event data provided by StatsBomb. The GNN architecture is based on Graph Convolutional Networks (Kipf & Welling, 2017).
 
 ## License
 
 This project is open-source and available for educational and research purposes. The code is provided without warranty. The underlying match data is provided by StatsBomb under their Open Data license. Please refer to StatsBomb's terms when using the data.
 
 For questions, issues, or contributions, please open an issue on the GitHub repository.
+
