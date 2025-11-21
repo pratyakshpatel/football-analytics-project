@@ -126,7 +126,6 @@ The code requires Python 3.8 or later. Ensure you have Python installed on your 
 python --version
 ```
 
-If you need to install Python, visit https://www.python.org/downloads/ and follow the installation instructions for your operating system.
 
 ### Required Dependencies
 
