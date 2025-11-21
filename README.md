@@ -352,13 +352,7 @@ This creates a 16x12 grid (192 zones instead of 96), allowing finer spatial reso
 
 When the pipeline completes, it prints the final result in this format:
 
-```
-================================================================================
-FINAL RESULT
-================================================================================
-Compatibility Score (5503 Lionel Andrés Messi Cuccittini → 4320 Neymar da Silva Santos Junior): 0.8199
-================================================================================
-```
+
 
 The output shows:
 - Player A's ID and full name
